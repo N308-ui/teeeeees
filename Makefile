@@ -2,7 +2,10 @@ CXX = c++
 CXXFLAGS = -Wall -Wextra -Werror  -std=c++98 
 NAME = HttpServer
 
-FILECPP = $(wildcard *.cpp) $(wildcard network/*.cpp) helper_function/ft_atoi.cpp
+FILECPP = $(wildcard *.cpp)\
+			$(wildcard network/*.cpp)\
+			$(wildcard helper_function/*.cpp)\
+			$(wildcard method/*.cpp)
 
 OBJCXX = $(FILECPP:.cpp=.o)
 

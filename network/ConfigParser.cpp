@@ -53,25 +53,52 @@ std::string ConfigParser::trimWhitespace(const std::string& str) {
     return (str.substr(first, last - first + 1));
 }
 
+bool ConfigParser::isValidCgiPath(const std::string& path) const {
+    if (path.empty() || path[0] != '/') {
+        return false;
+    }
+    if (path.find_first_of(" \t\n\r\"'{};") != std::string::npos) {
+        return false;
+    }
+    return true;
+}
+
+bool ConfigParser::isValidLocationPath(const std::string& path) const {
+    if (path == ".") {
+        return false;
+    }
+    if (path[0] != '/' && (path.size() < 2 || path[0] != '~')) {
+        return false;
+    }
+    return true;
+}
+
+bool ConfigParser::hasGarbageAfterSemicolon(const std::vector<std::string>& tokens) const {
+    size_t semicolon_pos = 0;
+    for (; semicolon_pos < tokens.size(); semicolon_pos++) {
+        if (tokens[semicolon_pos] == ";") {
+            break;
+        }
+    }
+    return (semicolon_pos != tokens.size() - 1);
+}
+
 std::vector<std::string> ConfigParser::tokenize(const std::string& line) {
     std::vector<std::string> tokens;
     std::string token;
     bool in_quotes = false;
 
     for (size_t i = 0; i < line.length(); i++) {
-        // If the current character is a double quote, toggle the quote flag and add it to the token
         if (line[i] == '"') {
             in_quotes = !in_quotes;
             token += line[i];
         }
-        // If it's a space or tab and we're not inside quotes, treat it as a token separator
         else if ((line[i] == ' ' || line[i] == '\t') && !in_quotes) {
             if (!token.empty()) {
                 tokens.push_back(token);
                 token.clear();
             }
         }
-        // If it's a curly brace, push current token (if any), then push the brace as a token
         else if (line[i] == '{' || line[i] == '}') {
             if (!token.empty()) {
                 tokens.push_back(token);
@@ -79,20 +106,24 @@ std::vector<std::string> ConfigParser::tokenize(const std::string& line) {
             }
             tokens.push_back(std::string(1, line[i]));
         }
-        // For all other characters, add to the current token
+        else if (line[i] == ';') {
+            if (!token.empty()) {
+                tokens.push_back(token);
+                token.clear();
+            }
+            tokens.push_back(std::string(1, line[i]));
+        }
         else {
             token += line[i];
         }
     }
 
-    // After the loop, if there's any token left, push it
     if (!token.empty()) {
         tokens.push_back(token);
     }
 
     return tokens;
 }
-
 
 bool ConfigParser::parseContent() {
     size_t line_num = 0;
@@ -125,7 +156,6 @@ bool ConfigParser::parseContent() {
 }
 
 bool ConfigParser::parseServerBlock(size_t& line_num) {
-    // Check for open brace '{'
     std::vector<std::string> tokens = tokenize(_content[line_num]);
     if (tokens.size() != 2 || tokens[1] != "{") {
         std::cerr << "Error: Expected a brace '{' after 'server' at line " << line_num + 1 << std::endl;
@@ -135,7 +165,6 @@ bool ConfigParser::parseServerBlock(size_t& line_num) {
     ServerBlock server;
     line_num++;
 
-    // Parse server block content until we find a closing brace
     while (line_num < _content.size()) {
         tokens = tokenize(_content[line_num]);
         
@@ -145,42 +174,59 @@ bool ConfigParser::parseServerBlock(size_t& line_num) {
         }
         
         if (tokens[0] == "}") {
-            // End of server block
             _servers.push_back(server);
             line_num++;
             return true;
         } 
         else if (tokens[0] == "listen") {
-            if (tokens.size() >= 2) {
-                // Handle IP:PORT format
-                size_t colon_pos = tokens[1].find(':');
-                if (colon_pos != std::string::npos) {
-                    server.setHost(tokens[1].substr(0, colon_pos));
-                    server.setPort(std::atoi(tokens[1].substr(colon_pos + 1).c_str()));
-                } else {
-                    // Handle just port number (default host)
-                    server.setHost("0.0.0.0"); // Default host
-                    server.setPort(std::atoi(tokens[1].c_str()));
-                }
-            } else {
-                std::cerr << "Error: 'listen' directive requires an argument at line " << line_num + 1 << std::endl;
+            if (tokens.size() < 2 || tokens.back() != ";") {
+                std::cerr << "Error: Invalid listen directive at line " << line_num + 1 << std::endl;
                 return false;
+            }
+
+            std::string listen = tokens[1];
+            size_t colon_pos = listen.find(':');
+            if (colon_pos != std::string::npos) {
+                server.setHost(listen.substr(0, colon_pos));
+                server.setPort(std::atoi(listen.substr(colon_pos + 1).c_str()));
+            } else {
+                server.setHost("0.0.0.0");
+                server.setPort(std::atoi(listen.c_str()));
             }
         }
         else if (tokens[0] == "server_name") {
-            for (size_t i = 1; i < tokens.size(); i++) {
+            if (tokens.size() < 2 || tokens.back() != ";") {
+                std::cerr << "Error: Invalid server_name directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+
+            for (size_t i = 1; i < tokens.size() - 1; i++) {
                 server.addServerName(tokens[i]);
             }
         } 
-        else if (tokens[0] == "root" && tokens.size() >= 2) {
+        else if (tokens[0] == "root") {
+            if (tokens.size() != 3 || tokens[2] != ";") {
+                std::cerr << "Error: Invalid root directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
             server.setRoot(tokens[1]);
         } 
         else if (tokens[0] == "index") {
-            for (size_t i = 1; i < tokens.size(); i++) {
+            if (tokens.size() < 2 || tokens.back() != ";") {
+                std::cerr << "Error: Invalid index directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+
+            for (size_t i = 1; i < tokens.size() - 1; i++) {
                 server.addIndexFile(tokens[i]);
             }
         } 
-        else if (tokens[0] == "error_page" && tokens.size() >= 3) {
+        else if (tokens[0] == "error_page") {
+            if (tokens.size() != 4 || tokens[3] != ";") {
+                std::cerr << "Error: Invalid error_page directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+
             int error_code = std::atoi(tokens[1].c_str());
             if (error_code < 100 || error_code > 599) {
                 std::cerr << "Error: Invalid HTTP error code at line " << line_num + 1 << std::endl;
@@ -188,61 +234,35 @@ bool ConfigParser::parseServerBlock(size_t& line_num) {
             }
             server.addErrorPage(error_code, tokens[2]);
         } 
-        else if (tokens[0] == "client_max_body_size" && tokens.size() >= 2) {
-            size_t size = std::atoi(tokens[1].c_str());
-            char unit;
-            if (tokens[1].size())
-                unit = tokens[1][tokens[1].size() -1];
-            else
-              unit = ' ';
+        else if (tokens[0] == "client_max_body_size") {
+            if (tokens.size() != 3 || tokens[2] != ";") {
+                std::cerr << "Error: Invalid client_max_body_size directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+
+            std::string size_str = tokens[1];
+            size_t size = std::atoi(size_str.c_str());
+            char unit = size_str.empty() ? ' ' : size_str[size_str.size() - 1];
+
             if (unit == 'M' || unit == 'm') {
                 size *= 1024 * 1024;
             } else if (unit == 'K' || unit == 'k') {
                 size *= 1024;
+            } else if (!std::isdigit(unit) && unit != ' ') {
+                std::cerr << "Error: Invalid unit in client_max_body_size at line " << line_num + 1 << std::endl;
+                return false;
             }
+
             server.setClientMaxBodySize(size);
         } 
         else if (tokens[0] == "location") {
-            if (tokens.size() < 2) {
-                std::cerr << "Error: 'location' directive requires a path at line " << line_num + 1 << std::endl;
+            LocationBlock location;
+            if (!parseLocationBlock(line_num, location)) {
                 return false;
             }
-            
-            LocationBlock location;
-            // Skip location block for now (you'll need to implement this)
-            // if (!parseLocationBlock(line_num, location)) {
-            //     return false;
-            // }
-
-            // server.addLocation(location);
-
-
-            int brace_count = 0;
-            bool found_open_brace = false;
-            
-            while (line_num < _content.size()) {
-                tokens = tokenize(_content[line_num]);
-                
-                for (size_t i = 0; i < tokens.size(); i++) {
-                    if (tokens[i] == "{") {
-                        found_open_brace = true;
-                        brace_count++;
-                    } else if (tokens[i] == "}") {
-                        brace_count--;
-                        if (brace_count == 0 && found_open_brace) {
-                            break;
-                        }
-                    }
-                }
-                
-                if (brace_count == 0 && found_open_brace) {
-                    server.addLocation(location);
-                    break;
-                }
-                
-                line_num++;
-            }
-        } 
+            server.addLocation(location);
+            line_num--;
+        }
         else {
             std::cerr << "Error: Unknown directive '" << tokens[0] << "' at line " << line_num + 1 << std::endl;
             return false;
@@ -252,5 +272,157 @@ bool ConfigParser::parseServerBlock(size_t& line_num) {
     }
     
     std::cerr << "Error: Unexpected end of file while parsing server block" << std::endl;
+    return false;
+}
+
+bool ConfigParser::parseLocationBlock(size_t& line_num, LocationBlock& location) {
+    std::vector<std::string> tokens = tokenize(_content[line_num]);
+    
+    if (tokens.size() < 3 || tokens[2] != "{" || !isValidLocationPath(tokens[1])) {
+        std::cerr << "Error: Invalid location path '" << (tokens.size() > 1 ? tokens[1] : "") 
+                  << "' at line " << line_num + 1 << std::endl;
+        return false;
+    }
+    
+    location.setPath(tokens[1]);
+    line_num++;
+    
+    while (line_num < _content.size()) {
+        tokens = tokenize(_content[line_num]);
+        
+        if (tokens.empty()) {
+            line_num++;
+            continue;
+        }
+        
+        if (tokens[0] == "}") {
+            line_num++;
+            return true;
+        }
+        
+        if (hasGarbageAfterSemicolon(tokens)) {
+            std::cerr << "Error: Extra characters after semicolon at line " << line_num + 1 << std::endl;
+            return false;
+        }
+        
+        if (tokens[0] == "allowed_methods") {
+            if (tokens.size() < 2 || tokens.back() != ";") {
+                std::cerr << "Error: Invalid allowed_methods directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            
+            std::vector<std::string> methods;
+            for (size_t i = 1; i < tokens.size() - 1; i++) {
+                // Convert method to uppercase for case-insensitive comparison
+                std::string method = tokens[i];
+                std::transform(method.begin(), method.end(), method.begin(), ::toupper);
+                
+                // Check if method is valid
+                if (method != "GET" && method != "POST" && method != "DELETE") {
+                    std::cerr << "Error: Invalid method '" << tokens[i] 
+                              << "' at line " << line_num + 1 
+                              << ". Only GET, POST, and DELETE are allowed." << std::endl;
+                    return false;
+                }
+                methods.push_back(method);
+            }
+            location.setMethods(methods);
+        }
+        else if (tokens[0] == "root") {
+            if (tokens.size() != 3 || tokens[2] != ";") {
+                std::cerr << "Error: Invalid root directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            location.setRoot(tokens[1]);
+        }
+        else if (tokens[0] == "index") {
+            if (tokens.size() < 2 || tokens.back() != ";") {
+                std::cerr << "Error: Invalid index directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            
+            std::vector<std::string> indexes;
+            for (size_t i = 1; i < tokens.size() - 1; i++) {
+                indexes.push_back(tokens[i]);
+            }
+            location.setIndexFiles(indexes);
+        }
+        else if (tokens[0] == "autoindex") {
+            if (tokens.size() != 3 || tokens[2] != ";") {
+                std::cerr << "Error: Invalid autoindex directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            
+            if (tokens[1] != "on" && tokens[1] != "off") {
+                std::cerr << "Error: autoindex must be 'on' or 'off' at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            location.setAutoindex(tokens[1] == "on");
+        }
+        else if (tokens[0] == "cgi_path") {
+            if (tokens.size() != 3 || tokens[2] != ";") {
+                std::cerr << "Error: Invalid cgi_path directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            
+            if (!isValidCgiPath(tokens[1])) {
+                std::cerr << "Error: Invalid CGI path '" << tokens[1] << "' at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            location.setCgiPath(tokens[1]);
+        }
+        else if (tokens[0] == "cgi_extension") {
+            if (tokens.size() != 3 || tokens[2] != ";") {
+                std::cerr << "Error: Invalid cgi_extension directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            
+            if (tokens[1].empty() || tokens[1][0] != '.') {
+                std::cerr << "Error: CGI extension must start with '.' at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            location.setCgiExtension(tokens[1]);
+        }
+        else if (tokens[0] == "upload_dir") {
+            if (tokens.size() != 3 || tokens[2] != ";") {
+                std::cerr << "Error: Invalid upload_dir directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            location.setUploadDir(tokens[1]);
+        }
+        else if (tokens[0] == "client_max_body_size") {
+            if (tokens.size() != 3 || tokens[2] != ";") {
+                std::cerr << "Error: Invalid client_max_body_size directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+
+            std::string size_str = tokens[1];
+            size_t size = std::atoi(size_str.c_str());
+            char unit = size_str.empty() ? ' ' : size_str[size_str.size() - 1];
+
+            if (unit == 'M' || unit == 'm') {
+                size *= 1024 * 1024;
+            } else if (unit == 'K' || unit == 'k') {
+                size *= 1024;
+            }
+
+            location.setClientMaxBodySize(size);
+        }
+        else if (tokens[0] == "return") {
+            if (tokens.size() != 3 || tokens[2] != ";") {
+                std::cerr << "Error: Invalid return directive at line " << line_num + 1 << std::endl;
+                return false;
+            }
+            location.setReturnUrl(tokens[1]);
+        }
+        else {
+            std::cerr << "Error: Unknown location directive '" << tokens[0] << "' at line " << line_num + 1 << std::endl;
+            return false;
+        }
+        
+        line_num++;
+    }
+    
+    std::cerr << "Error: Unexpected end of file while parsing location block" << std::endl;
     return false;
 }

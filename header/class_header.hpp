@@ -19,12 +19,23 @@
 #include <netinet/in.h>
 #include <netdb.h> 
 #include <stdlib.h>
+#include <sys/stat.h>
+#include <dirent.h> 
 
 #include <vector>
 #include <map>
 #include <fstream>
 #include <cstdlib>
-
+#include <cstdio>
 #include "../helper_function/my_lib.hpp"
+
+enum e_Status {
+    _FILE,
+    _DIR,
+    _UNKNOW,
+    _FAILER,
+
+    
+};
 
 #endif 

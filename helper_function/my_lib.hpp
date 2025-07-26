@@ -9,4 +9,5 @@
 
 
 std::string to_string(int number);
+int longPrefix(std::string local, std::string link);
 #endif

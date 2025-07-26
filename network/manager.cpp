@@ -70,11 +70,11 @@ void Manager::epoll_management()
     this->epoll = epoll_create(1);
     if (this->epoll == -1)
     {
-      std::cout << "can create epoll" << std::endl;
+      std::cout << "cant create epoll" << std::endl;
       exit (1);
     }
     this->add_all_servers_to_epoll(); 
-    while (servers.size()) {
+    while (1) {
       int files = epoll_wait(this->epoll, &this->ev[0], MAX_EVENT, 1000);
       for(int i = 0; i < files; i++)
       {
